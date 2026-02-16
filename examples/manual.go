@@ -7,7 +7,7 @@ import (
 	"github.com/gorunriki/mqttc/packets"
 )
 
-func manual() {
+func manualTest() {
 	fmt.Println("Testing manual TCP connection to EMQX...")
 
 	// connect to broker
@@ -73,4 +73,28 @@ func manual() {
 	} else {
 		fmt.Println("Unexpected response")
 	}
+
+	// publish a message
+	publishPacket := &packets.PublishPacket{
+		Dup:     false,
+		QoS:     0,
+		Retain:  false,
+		Topic:   "test/topic",
+		Payload: []byte("Hello, MQTT!"),
+	}
+
+	// encode publish packet
+	publishData := packets.EncodePublish(publishPacket)
+	fmt.Printf("Sending PUBLISH %d bytes: %x\n", len(publishData), publishData)
+
+	n, err = conn.Write(publishData)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Sent %d bytes\n", n)
+
+	fmt.Println("\n Message published")
+	fmt.Println("To ferify, run in another terminal: ")
+	fmt.Println(" mosquitto_sub -h localhost -t 'test/topic' -v")
+
 }

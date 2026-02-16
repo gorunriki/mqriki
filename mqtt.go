@@ -18,7 +18,7 @@ type Client struct {
 	connected bool
 }
 
-func NewClien(broker, clientID string) *Client {
+func NewClient(broker, clientID string) *Client {
 	return &Client{
 		broker:   broker,
 		clientID: clientID,
@@ -78,4 +78,67 @@ func (c *Client) Disconnect() error {
 	c.conn.Close()
 	c.connected = false
 	return nil
+}
+
+// needs to change the arguments to add QoS, retail, etc...
+func (c *Client) Publish(topic, message string) error {
+	if !c.connected {
+		return ErrNotConnected
+	}
+
+	publishPacket := &packets.PublishPacket{
+		Dup:     false,
+		QoS:     0,
+		Retain:  false,
+		Topic:   topic,
+		Payload: []byte(message),
+	}
+
+	data := packets.EncodePublish(publishPacket)
+	_, err := c.conn.Write(data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) Subscribe(topic string) error {
+	if !c.connected {
+		return ErrNotConnected
+	}
+
+	packetID := uint16(1) // or use a counter/generator for multiple subscriptions
+	subscriberPacket := &packets.SubscribePacket{
+		PacketID: packetID,
+		Topics: []packets.Subscription{
+			{
+				Topic: topic,
+				QoS:   0,
+			},
+		},
+	}
+	data := packets.EncodeSubscribe(subscriberPacket)
+	_, err := c.conn.Write(data)
+	if err != nil {
+		return err
+	}
+
+	// read SUBACK
+	resp := make([]byte, 1024) // SUBACK should be at least 5 bytes (fixed header + packet ID + return code)
+	n, err := c.conn.Read(resp)
+	if err != nil {
+		return err
+	}
+
+	suback, err := packets.DecodeSuback(resp[:n])
+	if err != nil {
+		return err
+	}
+
+	if suback.PacketID != packetID || len(suback.ReturnCodes) == 0 || suback.ReturnCodes[0] != 0 {
+		return errors.New("subscription rejected by broker")
+	}
+
+	return nil
+
 }

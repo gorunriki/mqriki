@@ -7,8 +7,8 @@ import (
 	"github.com/gorunriki/mqttc"
 )
 
-func main() {
-	client := mqttc.NewClien("localhost:1883", "my-test-client")
+func main1() {
+	client := mqttc.NewClient("localhost:1883", "my-test-client")
 
 	fmt.Println("Connecting to broker...")
 	if err := client.Connect(); err != nil {
