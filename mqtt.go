@@ -13,7 +13,15 @@ var (
 	ErrNotConnected = errors.New("not connected to broker")
 )
 
+type Transport interface {
+	Read([]byte) (n int, err error)
+	Write([]byte) (n int, err error)
+	Close() error
+	SetReadDeadline(time.Time) error
+}
+
 type Client struct {
+	transport      Transport
 	conn           net.Conn
 	broker         string
 	clientID       string
@@ -21,6 +29,7 @@ type Client struct {
 	messageHandler MessageHandler
 	done           chan bool
 	incoming       chan *packets.PublishPacket
+	useWebsocket   bool
 }
 
 type MessageHandler func(topic string, payload []byte)
