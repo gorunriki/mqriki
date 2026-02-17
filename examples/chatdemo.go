@@ -11,7 +11,7 @@ import (
 	mqttc "github.com/gorunriki/mqttc"
 )
 
-func main() {
+func mainChat() {
 	fmt.Println("=== MQTT CHAT DEMO ===")
 
 	// Get user input

@@ -2,7 +2,9 @@ package mqttc
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"time"
 
 	"github.com/gorunriki/mqttc/packets"
 )
@@ -12,17 +14,28 @@ var (
 )
 
 type Client struct {
-	conn      net.Conn
-	broker    string
-	clientID  string
-	connected bool
+	conn           net.Conn
+	broker         string
+	clientID       string
+	connected      bool
+	messageHandler MessageHandler
+	done           chan bool
+	incoming       chan *packets.PublishPacket
 }
+
+type MessageHandler func(topic string, payload []byte)
 
 func NewClient(broker, clientID string) *Client {
 	return &Client{
 		broker:   broker,
 		clientID: clientID,
+		done:     make(chan bool),
+		incoming: make(chan *packets.PublishPacket, 100), // buffered channel for incoming messages
 	}
+}
+
+func (c *Client) SetMessageHandler(handler MessageHandler) {
+	c.messageHandler = handler
 }
 
 func (c *Client) Connect() error {
@@ -63,6 +76,11 @@ func (c *Client) Connect() error {
 	}
 
 	c.connected = true
+
+	go c.readLoop()       // start reading incoming packets
+	go c.processMessage() // start processing messages
+	go c.keepAlive()      // start keep alive pings
+
 	return nil
 }
 
@@ -141,4 +159,88 @@ func (c *Client) Subscribe(topic string) error {
 
 	return nil
 
+}
+
+// function to read incoming packets in a loop
+func (c *Client) readLoop() {
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(45 * time.Second)) // set read timeout to detect disconnections
+
+		resp := make([]byte, 1024)
+		_, err := c.conn.Read(resp)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				fmt.Println("Read timeout, connection may be lost")
+				c.connected = false
+			} else {
+				fmt.Printf("Read error  %v\n", err)
+			}
+			c.done <- true
+			return
+		}
+
+		c.conn.SetReadDeadline(time.Time{})
+
+		publish, err := packets.DecodePublish(resp)
+		if err != nil {
+			fmt.Printf("Publish decode error : %v\n", err)
+			continue
+		}
+		c.incoming <- publish
+	}
+}
+
+func (c *Client) processMessage() {
+	for {
+		select {
+		case publish := <-c.incoming:
+			if c.messageHandler != nil {
+				c.messageHandler(publish.Topic, publish.Payload)
+			} else {
+				fmt.Printf("Received message on topic %s: %s\n", publish.Topic, string(publish.Payload))
+			}
+
+			if publish.QoS == 1 {
+				c.sendPuback(publish.PacketID)
+			}
+
+		case <-c.done:
+			return
+		}
+	}
+}
+
+func (c *Client) sendPuback(packetID uint16) error {
+	packet := []byte{
+		0x40, //PUBACK packet type
+		0x02, // remaining length
+		byte(packetID >> 8),
+		byte(packetID & 0xFF),
+	}
+	_, err := c.conn.Write(packet)
+	return err
+}
+
+func (c *Client) keepAlive() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if !c.connected {
+				return
+			}
+			fmt.Println("Sending PINGREQ...")
+			pingreq := []byte{0xC0, 0x00} // PINGREQ packet
+			_, err := c.conn.Write(pingreq)
+			if err != nil {
+				fmt.Printf("Ping error : %v\n", err)
+				c.connected = false
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
 }
